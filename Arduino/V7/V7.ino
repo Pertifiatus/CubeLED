@@ -35,8 +35,8 @@
 #define PIN_TFT_DC    7
 #define PIN_TFT_RST   10
 #define PIN_NEO       0
-#define PIN_ENC_CLK   1
-#define PIN_ENC_DT    3
+#define PIN_ENC_CLK   3
+#define PIN_ENC_DT    1
 #define PIN_ENC_SW    21
 
 // ═══════════════════════════════════════════════════════════════════
@@ -133,28 +133,42 @@ int     prevActiveEffect = -1;
 unsigned long lastFrameMs = 0;
 
 // ═══════════════════════════════════════════════════════════════════
-//  ENCODER (Software-Quadratur, halbe Auflösung — 2 Zählschritte/Rasterung,
-//  daher unten /2 wie zuvor bei ESP32Encoder::attachHalfQuad)
+//  ENCODER (Software-Vollquadratur mit Gray-Code-Übergangstabelle)
 // ═══════════════════════════════════════════════════════════════════
-volatile long     encoderCount   = 0;
-volatile uint32_t lastEncEdgeUs  = 0;
-long              lastCount      = 0;
-unsigned long     lastBtnMs      = 0;
-bool              btnHeld        = false;  // true solange die Taste durchgehend gedrückt gehalten wird
+volatile long  encoderCount = 0;
+long           lastCount    = 0;
 
-// PCNT hatte einen Hardware-Glitchfilter (setFilter), der Prellen des
-// mechanischen Encoders wegfiltert — hier per Zeitfenster nachgebildet:
-// Flanken, die schneller als ENC_DEBOUNCE_US aufeinander folgen, sind
-// Prellen desselben Rastschritts, nicht ein echter zweiter Schritt.
-#define ENC_DEBOUNCE_US 800
+// ═══════════════════════════════════════════════════════════════════
+//  TASTER (entprellt über Zustands-Stabilität, nicht über reine Zeitfenster
+//  seit dem letzten Druck — sonst löst ein kurzes Prellen mitten im
+//  physischen Tastendruck 30ms später einen zweiten, ungewollten Klick aus)
+// ═══════════════════════════════════════════════════════════════════
+#define BTN_DEBOUNCE_MS 30
+bool          btnRawLast  = HIGH;
+bool          btnStable   = HIGH;
+unsigned long btnChangeMs = 0;
+
+// Gray-Code-Übergangstabelle (Standard-Vollschritt-Dekodierung): Index ist
+// (alter AB-Zustand << 2 | neuer AB-Zustand), Wert ist +1/-1 für einen
+// echten Einzelschritt oder 0 für einen ungültigen Sprung (Prellen oder
+// verpasste Zwischenflanke). Dadurch braucht es kein Zeitfenster-Debounce
+// mehr — Prellen hebt sich durch die Zustandsprüfung von selbst auf, statt
+// als Zählschritt in die falsche Richtung zu landen (das Risiko bei reinem
+// Ein-Kanal-Decoding mit Zeitfenster-Verwerfung).
+static const int8_t QUAD_TABLE[16] = {
+   0, -1,  1,  0,
+   1,  0,  0, -1,
+  -1,  0,  0,  1,
+   0,  1, -1,  0
+};
+volatile uint8_t lastAB = 0;
 
 void IRAM_ATTR handleEncoderISR() {
-  uint32_t now = micros();
-  if (now - lastEncEdgeUs < ENC_DEBOUNCE_US) return;
-  lastEncEdgeUs = now;
-  bool a = digitalRead(PIN_ENC_CLK);
-  bool b = digitalRead(PIN_ENC_DT);
-  encoderCount += (a == b) ? -1 : 1;
+  uint8_t a  = digitalRead(PIN_ENC_CLK);
+  uint8_t b  = digitalRead(PIN_ENC_DT);
+  uint8_t ab = (a << 1) | b;
+  encoderCount += QUAD_TABLE[(lastAB << 2) | ab];
+  lastAB = ab;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -924,7 +938,7 @@ void loadConfig() {
 //  ENCODER-HANDLING
 // ═══════════════════════════════════════════════════════════════════
 void handleEncoder() {
-  long count = encoderCount / 2;
+  long count = encoderCount / 4;  // 4 gültige Übergänge pro Rastung (Vollquadratur)
   int  delta = (int)(count - lastCount);
   if (delta == 0) return;
   lastCount = count;
@@ -968,16 +982,16 @@ void handleEncoder() {
 }
 
 void handleButton() {
-  bool pressed = (digitalRead(PIN_ENC_SW) == LOW);
+  bool raw = digitalRead(PIN_ENC_SW);
 
-  if (!pressed) {
-    btnHeld = false;  // Taste losgelassen — nächster Druck zählt wieder als Klick
-    return;
+  if (raw != btnRawLast) {
+    btnChangeMs = millis();  // jede Pegeländerung startet das Entprell-Fenster neu
+    btnRawLast  = raw;
   }
-  if (btnHeld) return;             // Taste wird weiter gehalten -> kein weiterer Klick
-  if (millis() - lastBtnMs < 30) return;  // reiner Prellschutz, kein Wiederhol-Timer mehr
-  lastBtnMs = millis();
-  btnHeld   = true;
+  if (millis() - btnChangeMs < BTN_DEBOUNCE_MS) return;  // noch nicht stabil (Prellen)
+  if (raw == btnStable) return;   // stabiler Zustand hat sich nicht geändert
+  btnStable = raw;
+  if (btnStable != LOW) return;   // nur auf den Druck reagieren, nicht auf das Loslassen
 
   // Effekt-Screen hat zwei Editier-Stufen hinter einem Tastendruck:
   // 1. Druck → editMode an, Encoder wählt den Effekt (wie das Seiten-Rad).
@@ -1009,6 +1023,7 @@ void setup() {
   pinMode(PIN_ENC_CLK, INPUT_PULLUP);
   pinMode(PIN_ENC_DT,  INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(PIN_ENC_CLK), handleEncoderISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_DT),  handleEncoderISR, CHANGE);
   pinMode(PIN_ENC_SW, INPUT_PULLUP);
 
   leds.begin();
