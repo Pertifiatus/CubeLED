@@ -74,33 +74,25 @@ Arduino_GFX    *gfx = new Arduino_GC9A01(bus, PIN_TFT_RST, 0, true);
 #define CY  120
 
 // ═══════════════════════════════════════════════════════════════════
-//  KONFIGURATION
+//  KONFIGURATION (eine globale Farbe für den ganzen Würfel)
 // ═══════════════════════════════════════════════════════════════════
 struct SideConfig { uint8_t hue, sat, bri; };
 
-SideConfig cfg[NUM_SIDES] = {
-  {0,   255, 200},
-  {51,  255, 200},
-  {102, 255, 200},
-  {153, 255, 200},
-  {204, 255, 200}
-};
-
-SideConfig cfgPrev[NUM_SIDES];
+SideConfig cfg     = {0, 255, 200};
+SideConfig cfgPrev;
 bool prevEditMode = false;
 
 // ═══════════════════════════════════════════════════════════════════
 //  UI STATE
 // ═══════════════════════════════════════════════════════════════════
-enum Setting { SETTING_BRI = 0, SETTING_HUE, SETTING_SAT, SETTING_SIDE,
+enum Setting { SETTING_BRI = 0, SETTING_HUE, SETTING_SAT,
                SETTING_EFFECT, NUM_SETTINGS };
 
 const char* SETTING_NAMES[NUM_SETTINGS] = {
-  "HELLIGKEIT", "FARBE", "SAETTIGUNG", "SEITE", "EFFEKT"
+  "HELLIGKEIT", "FARBE", "SAETTIGUNG", "EFFEKT"
 };
 
 int  curSetting = SETTING_BRI;
-int  curSide    = 0;
 bool editMode   = false;
 
 bool needFullRedraw   = true;
@@ -343,7 +335,7 @@ void titleBoxRect(int16_t &boxX, int16_t &boxY, int16_t &boxW, int16_t &boxH) {
 // Farbe/Sättigung direkt über dessen farbiger Fläche — deshalb ein
 // abgerundeter Kasten dahinter, der ~40% der Hintergrundfarbe durchscheinen
 // lässt (dim565 auf 0.4), damit der weiße Text lesbar bleibt. bgColor ist
-// BLACK bei Helligkeit/Seite (kein Kreis dort → Kasten bleibt unsichtbar,
+// BLACK bei Helligkeit (kein Kreis dort → Kasten bleibt unsichtbar,
 // da dim565(BLACK,...) wieder BLACK ergibt).
 // Nur bei needFullRedraw nötig: der Name ändert sich nur, wenn curSetting
 // wechselt, und genau dann wurde der Bereich gerade von clearScreenZones()
@@ -405,8 +397,8 @@ void fillCircleExceptRoundRect(int cx, int cy, int r, uint16_t color,
   }
 }
 
-// Seiten-/Menü-Anzeige: ein Punkt pro Einstellungsseite (HELLIGKEIT, FARBE,
-// SAETTIGUNG, SEITE), der aktive Punkt entspricht curSetting — grau statt
+// Menü-Anzeige: ein Punkt pro Einstellungsseite (HELLIGKEIT, FARBE,
+// SAETTIGUNG, EFFEKT), der aktive Punkt entspricht curSetting — grau statt
 // farbig. Ändert sich nur mit curSetting, siehe drawTitle().
 void drawMenuDots() {
   if (!needFullRedraw) return;
@@ -427,7 +419,7 @@ void drawEditBorder() {
   if (!needBorderRedraw && editMode == prevEditMode) return;
 
   if (editMode) {
-    uint16_t c = hsv8To565(cfg[curSide].hue, 255, 220);
+    uint16_t c = hsv8To565(cfg.hue, 255, 220);
     gfx->drawCircle(CX, CY, 118, c);
     gfx->drawCircle(CX, CY, 117, dim565(c, 0.35f));
   } else {
@@ -443,16 +435,16 @@ void drawEditBorder() {
 void drawBrightnessScreen() {
   if (needFullRedraw) clearScreenZones();
 
-  uint8_t  bri   = cfg[curSide].bri;
-  uint16_t sCol  = hsv8To565(cfg[curSide].hue, cfg[curSide].sat, 200);
+  uint8_t  bri   = cfg.bri;
+  uint16_t sCol  = hsv8To565(cfg.hue, cfg.sat, 200);
   uint16_t empty = 0x18C3;
 
-  bool briChanged = (cfgPrev[curSide].bri != bri);
-  bool hueChanged = (cfgPrev[curSide].hue != cfg[curSide].hue);
-  bool satChanged = (cfgPrev[curSide].sat != cfg[curSide].sat);
+  bool briChanged = (cfgPrev.bri != bri);
+  bool hueChanged = (cfgPrev.hue != cfg.hue);
+  bool satChanged = (cfgPrev.sat != cfg.sat);
 
   if (needFullRedraw || hueChanged || satChanged) {
-    // Vollständiger Bogen (Screen-/Seiten-/Farbwechsel)
+    // Vollständiger Bogen (Screen-/Farbwechsel)
     fillArcSector(CX, CY, 86, 108, 225.0f, 495.0f, empty);
     if (bri > 0) {
       fillArcSector(CX, CY, 86, 108, 225.0f, 225.0f + 270.0f * (bri / 255.0f), sCol);
@@ -462,7 +454,7 @@ void drawBrightnessScreen() {
 
   } else if (needArcRedraw || briChanged) {
     // Nur das Delta zwischen altem und neuem Helligkeitswert neu zeichnen
-    float oldDeg = 225.0f + 270.0f * (cfgPrev[curSide].bri / 255.0f);
+    float oldDeg = 225.0f + 270.0f * (cfgPrev.bri / 255.0f);
     float newDeg = 225.0f + 270.0f * (bri / 255.0f);
     if (newDeg > oldDeg) {
       fillArcSector(CX, CY, 86, 108, oldDeg, newDeg, sCol);
@@ -482,15 +474,15 @@ void drawBrightnessScreen() {
   drawTitle(BLACK);
   drawMenuDots();
   drawEditBorder();
-  cfgPrev[curSide] = cfg[curSide];
+  cfgPrev = cfg;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  SCREEN: FARBE (HUE)
 // ═══════════════════════════════════════════════════════════════════
 void drawHueScreen() {
-  bool hueChanged = (cfgPrev[curSide].hue != cfg[curSide].hue);
-  bool satChanged = (cfgPrev[curSide].sat != cfg[curSide].sat);
+  bool hueChanged = (cfgPrev.hue != cfg.hue);
+  bool satChanged = (cfgPrev.sat != cfg.sat);
 
   if (needFullRedraw) {
     clearScreenZones();
@@ -501,21 +493,21 @@ void drawHueScreen() {
       fillArcSector(CX, CY, 86, 108, (float)deg, (float)(deg + 2),
                     hsv8To565(h8, 255, 200));
     }
-    float markerDeg = (float)cfg[curSide].hue * 360.0f / 255.0f;
+    float markerDeg = (float)cfg.hue * 360.0f / 255.0f;
     drawArcMarker(CX, CY, 97, markerDeg,
-                  WHITE, hsv8To565(cfg[curSide].hue, 255, 230));
+                  WHITE, hsv8To565(cfg.hue, 255, 230));
 
   } else if (needArcRedraw || hueChanged) {
     // Alter Marker gezielt übermalen (nur ±6° des Rings neu zeichnen)
-    float oldDeg = (float)cfgPrev[curSide].hue * 360.0f / 255.0f;
+    float oldDeg = (float)cfgPrev.hue * 360.0f / 255.0f;
     repairHueRing(oldDeg);
 
-    float newDeg = (float)cfg[curSide].hue * 360.0f / 255.0f;
+    float newDeg = (float)cfg.hue * 360.0f / 255.0f;
     drawArcMarker(CX, CY, 97, newDeg,
-                  WHITE, hsv8To565(cfg[curSide].hue, 255, 230));
+                  WHITE, hsv8To565(cfg.hue, 255, 230));
   }
 
-  uint16_t previewCol = hsv8To565(cfg[curSide].hue, cfg[curSide].sat, 200);
+  uint16_t previewCol = hsv8To565(cfg.hue, cfg.sat, 200);
   if (needFullRedraw || needArcRedraw || hueChanged || satChanged) {
     int16_t boxX, boxY, boxW, boxH;
     titleBoxRect(boxX, boxY, boxW, boxH);
@@ -525,18 +517,18 @@ void drawHueScreen() {
   drawTitle(previewCol);
   drawMenuDots();
   drawEditBorder();
-  cfgPrev[curSide] = cfg[curSide];
+  cfgPrev = cfg;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  SCREEN: SAETTIGUNG
 // ═══════════════════════════════════════════════════════════════════
 void drawSaturationScreen() {
-  uint8_t hue = cfg[curSide].hue;
-  uint8_t sat = cfg[curSide].sat;
+  uint8_t hue = cfg.hue;
+  uint8_t sat = cfg.sat;
 
-  bool satChanged = (cfgPrev[curSide].sat != sat);
-  bool hueChanged = (cfgPrev[curSide].hue != hue);
+  bool satChanged = (cfgPrev.sat != sat);
+  bool hueChanged = (cfgPrev.hue != hue);
 
   if (needFullRedraw) clearScreenZones();
 
@@ -557,7 +549,7 @@ void drawSaturationScreen() {
 
   } else if (needArcRedraw || satChanged) {
     // Alter Marker gezielt übermalen
-    float oldDeg = 225.0f + (cfgPrev[curSide].sat / 255.0f) * 270.0f;
+    float oldDeg = 225.0f + (cfgPrev.sat / 255.0f) * 270.0f;
     repairSatRing(oldDeg, hue);
 
     float newDeg = 225.0f + (sat / 255.0f) * 270.0f;
@@ -574,80 +566,19 @@ void drawSaturationScreen() {
   drawTitle(previewCol);
   drawMenuDots();
   drawEditBorder();
-  cfgPrev[curSide] = cfg[curSide];
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  SCREEN: SEITE
-// ═══════════════════════════════════════════════════════════════════
-// Gleicher 270°-Bereich (225°..495°) wie bei Helligkeit/Sättigung, mit
-// derselben 90°-Lücke unten — dadurch kann kein Sektor mehr bis zur
-// Menü-Anzeige/Titel-Box durchreichen, ganz ohne Sonderbehandlung dort.
-const float SIDE_START = 225.0f;
-const float SIDE_END   = 495.0f;
-const float SIDE_GAP   = 5.0f;
-const float SIDE_SWEEP = ((SIDE_END - SIDE_START) - NUM_SIDES * SIDE_GAP) / NUM_SIDES;
-int prevActiveSide = -1;  // merkt sich den zuletzt aktiven Sektor für die Wheel-Reparatur
-
-float sideSectorStart(int i) { return SIDE_START + i * (SIDE_SWEEP + SIDE_GAP); }
-
-void drawSideSector(int i, bool active) {
-  float startDeg = sideSectorStart(i);
-  float endDeg   = startDeg + SIDE_SWEEP;
-
-  // Kompletten möglichen Radialbereich (aktiv ODER inaktiv) erst löschen,
-  // damit beim Wechsel keine Ringreste des jeweils anderen Zustands bleiben.
-  fillArcSector(CX, CY, 80, 108, startDeg, endDeg, BLACK);
-
-  uint16_t c = active
-    ? hsv8To565(cfg[i].hue, cfg[i].sat, 220)
-    : dim565(hsv8To565(cfg[i].hue, cfg[i].sat, 200), 0.2f);
-
-  int outerR = active ? 108 : 103;
-  int innerR = active ? 80  :  87;
-  fillArcSector(CX, CY, innerR, outerR, startDeg, endDeg, c);
-
-  float midDeg = startDeg + SIDE_SWEEP / 2.0f;
-  int   tx     = CX + (int)(62 * fastSinDeg(midDeg)) - 4;
-  int   ty     = CY - (int)(62 * fastCosDeg(midDeg)) - 6;
-  gfx->setTextSize(1);
-  gfx->setTextColor(active ? WHITE : 0x4208);
-  gfx->setCursor(tx, ty);
-  gfx->print(i + 1);
-}
-
-void drawSideScreen() {
-  if (needFullRedraw) {
-    clearScreenZones();
-    for (int i = 0; i < NUM_SIDES; i++) {
-      drawSideSector(i, i == curSide);
-    }
-    prevActiveSide = curSide;
-
-  } else if (needArcRedraw && curSide != prevActiveSide) {
-    // Nur den alten (jetzt inaktiven) und neuen (jetzt aktiven) Sektor neu zeichnen
-    drawSideSector(prevActiveSide, false);
-    drawSideSector(curSide, true);
-    prevActiveSide = curSide;
-  }
-
-  // Aktive Seitennummer — unter dem Titel (Titel endet bei y=100+16=116)
-  gfx->fillRect(CX - 30, 120, 60, 38, BLACK);
-  char buf[3];
-  snprintf(buf, sizeof(buf), "%d", curSide + 1);
-  drawCentered(buf, 122, 4, WHITE);
-
-  drawTitle(BLACK);
-  drawMenuDots();
-  drawEditBorder();
+  cfgPrev = cfg;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  SCREEN: EFFEKT
 // ═══════════════════════════════════════════════════════════════════
-// Gleiches Rad-Layout wie SEITE (225°..495°, 90°-Lücke unten), aber die
-// Sektoren sind neutral grau statt farbig, da ein Effekt keine eigene
-// feste Farbe hat (die Farbe kommt zur Laufzeit von cfg[curSide]).
+// 270°-Bereich (225°..495°) mit 90°-Lücke unten — dadurch kann kein Sektor
+// bis zur Menü-Anzeige/Titel-Box durchreichen, ganz ohne Sonderbehandlung
+// dort. Sektoren sind neutral grau statt farbig, da ein Effekt keine eigene
+// feste Farbe hat (die Farbe kommt zur Laufzeit von cfg).
+const float SIDE_START = 225.0f;
+const float SIDE_END   = 495.0f;
+const float SIDE_GAP   = 5.0f;
 const float EFFECT_SWEEP = ((SIDE_END - SIDE_START) - NUM_EFFECTS * SIDE_GAP) / NUM_EFFECTS;
 
 float effectSectorStart(int i) { return SIDE_START + i * (EFFECT_SWEEP + SIDE_GAP); }
@@ -778,7 +709,6 @@ void drawScreen() {
     case SETTING_BRI:    drawBrightnessScreen(); break;
     case SETTING_HUE:    drawHueScreen();        break;
     case SETTING_SAT:    drawSaturationScreen(); break;
-    case SETTING_SIDE:   drawSideScreen();       break;
     case SETTING_EFFECT: drawEffectScreen();     break;
   }
 
@@ -791,20 +721,34 @@ void drawScreen() {
 // ═══════════════════════════════════════════════════════════════════
 //  LEDS
 // ═══════════════════════════════════════════════════════════════════
+
+// Setzt die Ausgabe der WS2812-Daten ab, während die Encoder-ISR pausiert
+// ist — sonst kann ein GPIO-Interrupt (CLK/DT feuern bei aktivem Drehen sehr
+// häufig) mitten in die zeitkritische RMT-Übertragung fallen und einzelne
+// LEDs für einen Frame mit Zufallsfarben zeigen ("Flackern beim Farbe
+// ändern", genau dann wenn Drehen + show() gleichzeitig passieren).
+void ledsShow() {
+  detachInterrupt(digitalPinToInterrupt(PIN_ENC_CLK));
+  detachInterrupt(digitalPinToInterrupt(PIN_ENC_DT));
+  leds.show();
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_CLK), handleEncoderISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_DT),  handleEncoderISR, CHANGE);
+}
+
 void updateLeds() {
+  uint32_t c = leds.gamma32(hsv8ToNeo(cfg.hue, cfg.sat, cfg.bri));
   for (int s = 0; s < NUM_SIDES; s++) {
-    uint32_t c = leds.gamma32(hsv8ToNeo(cfg[s].hue, cfg[s].sat, cfg[s].bri));
     setSideColor(s, c);
   }
-  leds.show();
+  ledsShow();
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  EFFEKT-ANIMATION
 // ═══════════════════════════════════════════════════════════════════
 // Effekte sind global (ein Effekt für den ganzen Würfel) und benutzen die
-// Farbe/Helligkeit der aktuell gewählten Seite (cfg[curSide]) als Basis —
-// so passt sich z.B. die Lavalampe an die zuletzt eingestellte Farbe an.
+// aktuelle Farbe/Helligkeit (cfg) als Basis — so passt sich z.B. die
+// Lavalampe an die zuletzt eingestellte Farbe an.
 
 void advanceEffectPhase() {
   // effectSpeed 0..255 → ca. 0.05..3.0 Grad/Frame (bei 60 FPS ~3..180 Grad/s)
@@ -813,9 +757,9 @@ void advanceEffectPhase() {
 }
 
 void applyEffectLeds() {
-  uint8_t baseHue = cfg[curSide].hue;
-  uint8_t baseSat = cfg[curSide].sat;
-  uint8_t baseBri = cfg[curSide].bri;
+  uint8_t baseHue = cfg.hue;
+  uint8_t baseSat = cfg.sat;
+  uint8_t baseBri = cfg.bri;
 
   switch (curEffect) {
 
@@ -891,7 +835,7 @@ void applyEffectLeds() {
     default: break;  // EFFECT_OFF wird nie hier behandelt (siehe loop())
   }
 
-  leds.show();
+  ledsShow();
 }
 
 // Wählt je nach aktuellem Effekt-Zustand die richtige LED-Ausgabe —
@@ -907,12 +851,9 @@ void refreshLeds() {
 // ═══════════════════════════════════════════════════════════════════
 void saveConfig() {
   prefs.begin("cube", false);
-  for (int i = 0; i < NUM_SIDES; i++) {
-    char k[4];
-    snprintf(k, sizeof(k), "h%d", i); prefs.putUChar(k, cfg[i].hue);
-    snprintf(k, sizeof(k), "s%d", i); prefs.putUChar(k, cfg[i].sat);
-    snprintf(k, sizeof(k), "b%d", i); prefs.putUChar(k, cfg[i].bri);
-  }
+  prefs.putUChar("h", cfg.hue);
+  prefs.putUChar("s", cfg.sat);
+  prefs.putUChar("b", cfg.bri);
   prefs.putUChar("fx",  (uint8_t)curEffect);
   prefs.putUChar("fxs", effectSpeed);
   prefs.end();
@@ -920,16 +861,13 @@ void saveConfig() {
 
 void loadConfig() {
   prefs.begin("cube", true);
-  for (int i = 0; i < NUM_SIDES; i++) {
-    char k[4];
-    snprintf(k, sizeof(k), "h%d", i); cfg[i].hue = prefs.getUChar(k, cfg[i].hue);
-    snprintf(k, sizeof(k), "s%d", i); cfg[i].sat = prefs.getUChar(k, cfg[i].sat);
-    snprintf(k, sizeof(k), "b%d", i); cfg[i].bri = prefs.getUChar(k, cfg[i].bri);
-  }
+  cfg.hue = prefs.getUChar("h", cfg.hue);
+  cfg.sat = prefs.getUChar("s", cfg.sat);
+  cfg.bri = prefs.getUChar("b", cfg.bri);
   curEffect   = prefs.getUChar("fx",  (uint8_t)curEffect);
   effectSpeed = prefs.getUChar("fxs", effectSpeed);
   prefs.end();
-  for (int i = 0; i < NUM_SIDES; i++) cfgPrev[i] = cfg[i];
+  cfgPrev          = cfg;
   prevActiveEffect = curEffect;
   prevEffectSpeed  = effectSpeed;
 }
@@ -949,22 +887,18 @@ void handleEncoder() {
   } else {
     switch (curSetting) {
       case SETTING_BRI:
-        cfg[curSide].bri = (uint8_t)constrain((int)cfg[curSide].bri + delta * 5, 0, 255);
+        cfg.bri = (uint8_t)constrain((int)cfg.bri + delta * 5, 0, 255);
         needArcRedraw = true;
         break;
       case SETTING_HUE:
-        cfg[curSide].hue = (uint8_t)((cfg[curSide].hue + delta * 3 + 256) % 256);
+        cfg.hue = (uint8_t)((cfg.hue + delta * 3 + 256) % 256);
         needArcRedraw  = true;
         needDotsRedraw = true;
         break;
       case SETTING_SAT:
-        cfg[curSide].sat = (uint8_t)constrain((int)cfg[curSide].sat + delta * 5, 0, 255);
+        cfg.sat = (uint8_t)constrain((int)cfg.sat + delta * 5, 0, 255);
         needArcRedraw  = true;
         needDotsRedraw = true;
-        break;
-      case SETTING_SIDE:
-        curSide       = (curSide + delta + NUM_SIDES) % NUM_SIDES;
-        needArcRedraw = true;  // nur betroffene Sektoren neu zeichnen
         break;
       case SETTING_EFFECT:
         if (speedEditMode) {
