@@ -10,12 +10,14 @@
  *  Bibliotheken (Library Manager):
  *    Arduino_GFX_Library  (moononournation)
  *    Adafruit NeoPixel
- *    ESP32Encoder
+ *
+ *  Encoder: kein ESP32Encoder (PCNT-Hardware) — der ESP32-C3 hat keinen
+ *  PCNT-Baustein, die Lib linkt dort nicht (undefined reference). Stattdessen
+ *  Software-Quadratur-Decoder per attachInterrupt(), siehe unten.
  */
 
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_NeoPixel.h>
-#include <ESP32Encoder.h>
 #include <Preferences.h>
 
 #define BLACK  0x0000
@@ -131,12 +133,29 @@ int     prevActiveEffect = -1;
 unsigned long lastFrameMs = 0;
 
 // ═══════════════════════════════════════════════════════════════════
-//  ENCODER
+//  ENCODER (Software-Quadratur, halbe Auflösung — 2 Zählschritte/Rasterung,
+//  daher unten /2 wie zuvor bei ESP32Encoder::attachHalfQuad)
 // ═══════════════════════════════════════════════════════════════════
-ESP32Encoder  encoder;
-long          lastCount = 0;
-unsigned long lastBtnMs = 0;
-bool          btnHeld   = false;  // true solange die Taste durchgehend gedrückt gehalten wird
+volatile long     encoderCount   = 0;
+volatile uint32_t lastEncEdgeUs  = 0;
+long              lastCount      = 0;
+unsigned long     lastBtnMs      = 0;
+bool              btnHeld        = false;  // true solange die Taste durchgehend gedrückt gehalten wird
+
+// PCNT hatte einen Hardware-Glitchfilter (setFilter), der Prellen des
+// mechanischen Encoders wegfiltert — hier per Zeitfenster nachgebildet:
+// Flanken, die schneller als ENC_DEBOUNCE_US aufeinander folgen, sind
+// Prellen desselben Rastschritts, nicht ein echter zweiter Schritt.
+#define ENC_DEBOUNCE_US 800
+
+void IRAM_ATTR handleEncoderISR() {
+  uint32_t now = micros();
+  if (now - lastEncEdgeUs < ENC_DEBOUNCE_US) return;
+  lastEncEdgeUs = now;
+  bool a = digitalRead(PIN_ENC_CLK);
+  bool b = digitalRead(PIN_ENC_DT);
+  encoderCount += (a == b) ? -1 : 1;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  PERSISTENZ
@@ -905,7 +924,7 @@ void loadConfig() {
 //  ENCODER-HANDLING
 // ═══════════════════════════════════════════════════════════════════
 void handleEncoder() {
-  long count = encoder.getCount() / 2;
+  long count = encoderCount / 2;
   int  delta = (int)(count - lastCount);
   if (delta == 0) return;
   lastCount = count;
@@ -987,9 +1006,9 @@ void setup() {
   gfx->begin();
   gfx->fillScreen(BLACK);
 
-  ESP32Encoder::useInternalWeakPullResistors = puType::up;
-  encoder.attachHalfQuad(PIN_ENC_CLK, PIN_ENC_DT);
-  encoder.setCount(0);
+  pinMode(PIN_ENC_CLK, INPUT_PULLUP);
+  pinMode(PIN_ENC_DT,  INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(PIN_ENC_CLK), handleEncoderISR, CHANGE);
   pinMode(PIN_ENC_SW, INPUT_PULLUP);
 
   leds.begin();
