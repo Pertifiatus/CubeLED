@@ -1,11 +1,13 @@
 #include <HomeSpan.h>
+#include "QRCodeRicmoo.h"
 #include "CubeShared.h"
 #include "HomeSpanMode.h"
 
 // Setup-Code ohne Bindestriche (HomeSpan verlangt exakt 8 Ziffern),
 // entspricht dem angezeigten Code 466-37-726.
-static const char* PAIRING_CODE = "46637726";
-static const char* QR_SETUP_ID  = "CLED";
+static const char*   PAIRING_CODE     = "46637726";
+static const uint32_t PAIRING_CODE_NUM = 46637726;
+static const char*   QR_SETUP_ID      = "CLED";
 
 // HomeKit-Lampe -- steuert dieselben 80 LEDs wie der Cube-Modus, aber mit
 // eigenem, von den Cube-Preferences unabhaengigem Zustand.
@@ -46,6 +48,58 @@ struct DEV_CubeLight : Service::LightBulb {
   }
 };
 
+// ═══════════════════════════════════════════════════════════════════
+//  QR-CODE PAIRING-ANZEIGE -- Klick auf den Encoder-Taster zeigt/versteckt
+//  den HomeKit-Pairing-QR-Code auf dem sonst schwarzen Display.
+// ═══════════════════════════════════════════════════════════════════
+#define BTN_DEBOUNCE_MS 30
+static bool          btnRawLast  = HIGH;
+static bool          btnStable   = HIGH;
+static unsigned long btnChangeMs = 0;
+static bool          qrVisible   = false;
+
+static void drawPairingQR() {
+  HapQR qrEncoder;
+  char *uri = qrEncoder.get(PAIRING_CODE_NUM, QR_SETUP_ID, (uint8_t)Category::Lighting);
+
+  const uint8_t QR_VERSION = 3;  // 29x29 Module, reicht fuer den ~20 Zeichen langen URI
+  uint8_t qrData[qrcode_getBufferSize(QR_VERSION)];
+  QRCode qrcode;
+  qrcode_initText(&qrcode, qrData, QR_VERSION, ECC_LOW, uri);
+
+  // ponytail: SCALE ist ein Kalibrierknopf -- am echten Rund-Display pruefen
+  // und anpassen, damit der QR-Code weder zu klein zum Scannen noch an den
+  // Ecken vom runden Gehaeuse abgeschnitten wird.
+  const int SCALE  = 4;
+  int       offset = CX - (qrcode.size * SCALE) / 2;
+
+  gfx->fillScreen(WHITE);
+  for (uint8_t y = 0; y < qrcode.size; y++) {
+    for (uint8_t x = 0; x < qrcode.size; x++) {
+      if (qrcode_getModule(&qrcode, x, y)) {
+        gfx->fillRect(offset + x * SCALE, offset + y * SCALE, SCALE, SCALE, BLACK);
+      }
+    }
+  }
+}
+
+static void handleQrToggleButton() {
+  bool raw = digitalRead(PIN_ENC_SW);
+
+  if (raw != btnRawLast) {
+    btnChangeMs = millis();
+    btnRawLast  = raw;
+  }
+  if (millis() - btnChangeMs < BTN_DEBOUNCE_MS) return;
+  if (raw == btnStable) return;
+  btnStable = raw;
+  if (btnStable != LOW) return;
+
+  qrVisible = !qrVisible;
+  if (qrVisible) drawPairingQR();
+  else           gfx->fillScreen(BLACK);
+}
+
 void homeSpanModeSetup() {
   Serial.begin(115200);
 
@@ -55,6 +109,8 @@ void homeSpanModeSetup() {
   leds.begin();
   leds.setBrightness(255);
   leds.show();
+
+  pinMode(PIN_ENC_SW, INPUT_PULLUP);
 
   homeSpan.setPairingCode(PAIRING_CODE);
   homeSpan.setQRID(QR_SETUP_ID);
@@ -69,4 +125,5 @@ void homeSpanModeSetup() {
 
 void homeSpanModeLoop() {
   homeSpan.poll();
+  handleQrToggleButton();
 }
