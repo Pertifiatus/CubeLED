@@ -20,9 +20,17 @@ Preferences, HomeSpan (Gregg Berman), QRCode (ricmoo). Verified against
 
 ## Global Constraints
 
-- Board: ESP32-C3, FQBN `esp32:esp32:esp32c3` (verify with
-  `arduino-cli board listall esp32c3` if this FQBN doesn't resolve on the
-  installed core version).
+- Board: ESP32-C3, FQBN `esp32:esp32:esp32c3:PartitionScheme=huge_app`
+  (verify with `arduino-cli board listall esp32c3` if this FQBN doesn't
+  resolve on the installed core version). The `huge_app` partition scheme
+  (3MB app / 1MB SPIFFS, no second OTA slot) is **required** once HomeSpan
+  is linked in — HomeSpan's WiFi/HAP stack alone overflows the default
+  dual-OTA partitioning (~1.25MB per app slot) by ~279KB, discovered while
+  compiling Task 3. OTA is not used anywhere in this project, so trading
+  the second app slot for headroom is free. `V7/` and the plain-copy `V8/`
+  from Tasks 1-2 already compiled fine under the plain `esp32:esp32:esp32c3`
+  FQBN (no HomeSpan code yet) — this partition scheme only matters from
+  Task 3 onward, once `HomeSpanMode.cpp` links against `<HomeSpan.h>`.
 - `V7/V7.ino` must remain byte-for-byte unchanged. Every task that touches
   files must `git status`/`git diff` to confirm `V7/` shows no changes.
 - No physical hardware is available this session. "Testing" = confirm each
@@ -360,7 +368,7 @@ Expected: no output.
 - [ ] **Step 8: Compile V8**
 
 ```powershell
-& "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn esp32:esp32:esp32c3 "V8"
+& "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn "esp32:esp32:esp32c3:PartitionScheme=huge_app" "V8"
 ```
 
 Expected: `Sketch uses ... bytes ...`, no `error:` lines. This confirms the
@@ -476,7 +484,7 @@ Expected: no output.
 - [ ] **Step 4: Compile V8**
 
 ```powershell
-& "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn esp32:esp32:esp32c3 "V8"
+& "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn "esp32:esp32:esp32c3:PartitionScheme=huge_app" "V8"
 ```
 
 Expected: `Sketch uses ... bytes ...`, no `error:` lines.
@@ -645,7 +653,7 @@ Expected: no output.
 - [ ] **Step 6: Compile V8**
 
 ```powershell
-& "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn esp32:esp32:esp32c3 "V8"
+& "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn "esp32:esp32:esp32c3:PartitionScheme=huge_app" "V8"
 ```
 
 Expected: `Sketch uses ... bytes ...`, no `error:` lines.
