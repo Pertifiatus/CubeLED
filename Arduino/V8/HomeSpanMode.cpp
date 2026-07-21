@@ -114,6 +114,11 @@ void homeSpanModeSetup() {
 
   homeSpan.setPairingCode(PAIRING_CODE);
   homeSpan.setQRID(QR_SETUP_ID);
+  // Kein WLAN gespeichert (z.B. Erstinbetriebnahme nach Verkauf) -> HomeSpan
+  // startet automatisch einen eigenen Setup-Access-Point mit Webformular,
+  // kein serieller Monitor noetig. Danach normaler Boot ins Heimnetz.
+  homeSpan.setApSSID("CubeLED-Setup");
+  homeSpan.enableAutoStartAP();
   homeSpan.begin(Category::Lighting, "CubeLED");
 
   new SpanAccessory();
