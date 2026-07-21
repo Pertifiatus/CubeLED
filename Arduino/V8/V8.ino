@@ -19,6 +19,8 @@
 #include <Arduino_GFX_Library.h>
 #include <Adafruit_NeoPixel.h>
 #include <Preferences.h>
+#include "CubeShared.h"
+#include "HomeSpanMode.h"
 
 #define BLACK  0x0000
 #define WHITE  0xFFFF
@@ -946,7 +948,7 @@ void handleButton() {
 // ═══════════════════════════════════════════════════════════════════
 //  SETUP & LOOP
 // ═══════════════════════════════════════════════════════════════════
-void setup() {
+void cubeSetup() {
   Serial.begin(115200);
 
   initTrigTables();
@@ -970,7 +972,7 @@ void setup() {
   lastFrameMs    = millis();
 }
 
-void loop() {
+void cubeLoop() {
   unsigned long now = millis();
 
   handleButton();
@@ -1003,4 +1005,24 @@ void loop() {
     saveConfig();
     savePending = false;
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  BOOT-MODUSWAHL: Cube-Modus vs. HomeSpan/HomeKit-Modus
+// ═══════════════════════════════════════════════════════════════════
+// GPIO20 wird einmalig beim Boot gelesen -- ein Umlegen des Schalters
+// wirkt erst nach einem Reset/Neustart, kein Live-Wechsel im Betrieb.
+static bool homeSpanModeActive = false;
+
+void setup() {
+  pinMode(PIN_MODE_SWITCH, INPUT_PULLUP);
+  homeSpanModeActive = (digitalRead(PIN_MODE_SWITCH) == LOW);
+
+  if (homeSpanModeActive) homeSpanModeSetup();
+  else                    cubeSetup();
+}
+
+void loop() {
+  if (homeSpanModeActive) homeSpanModeLoop();
+  else                    cubeLoop();
 }
