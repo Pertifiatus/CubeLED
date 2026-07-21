@@ -67,8 +67,15 @@ static int           onboardPage   = PAGE_TITLE;
 static bool          wasPaired     = false;
 static int           lastDrawnPage = -1;
 
+// Mit autoPoll() laeuft HomeSpan auf einem eigenen Task -- das Lesen seiner
+// Controller-Liste von hier aus (dem loop()-Task) muss daher ueber
+// HomeSpans eigenen Shared-Mutex abgesichert werden (homeSpanPAUSE/RESUME),
+// sonst waere das ein Data Race gegen den Poll-Task.
 static bool isPaired() {
-  return homeSpan.controllerListBegin() != homeSpan.controllerListEnd();
+  homeSpanPAUSE
+  bool result = homeSpan.controllerListBegin() != homeSpan.controllerListEnd();
+  homeSpanRESUME
+  return result;
 }
 
 static void drawTitleScreen() {
@@ -180,17 +187,20 @@ void homeSpanModeSetup() {
       new Characteristic::Name("CubeLED");
     new DEV_CubeLight();
 
-  // homeSpan.poll()'s allererster Aufruf blockiert, falls noch kein WLAN
-  // gespeichert ist, bis zu 300s lang (der Auto-Start-Access-Point laeuft
-  // synchron *innerhalb* dieses ersten Aufrufs) -- deshalb hier schon vor
-  // loop() den ersten Onboarding-Screen zeichnen, sonst bleibt das Display
-  // waehrend der ganzen WLAN-Einrichtung schwarz und reagiert auf nichts.
+  // homeSpan.poll() blockiert bis zu 300s, falls noch kein WLAN gespeichert
+  // ist (der Auto-Start-Access-Point laeuft synchron *innerhalb* des Aufrufs).
+  // autoPoll() laesst HomeSpan stattdessen auf einem eigenen FreeRTOS-Task
+  // laufen -- loop() bleibt dadurch frei fuer Display/Encoder, auch waehrend
+  // HomeSpan den Access Point bedient. WICHTIG: homeSpan.poll() darf dann in
+  // homeSpanModeLoop() NICHT mehr manuell aufgerufen werden (HomeSpan bricht
+  // sonst mit einem Fatal Error ab).
+  homeSpan.autoPoll();
+
   drawWifiStepScreen();
   onboardPage   = PAGE_WIFI;
   lastDrawnPage = PAGE_WIFI;
 }
 
 void homeSpanModeLoop() {
-  homeSpan.poll();
   updateOnboardScreen();
 }
