@@ -117,6 +117,8 @@ uint8_t effectSpeed      = 128;
 uint8_t prevEffectSpeed  = 128;
 bool    speedEditMode    = false;  // zweite Editier-Stufe: Effekt wählen vs. Geschwindigkeit einstellen
 float   effectPhase      = 0.0f;
+float   lavaPhase1       = 0.0f;  // eigene Phasen für die Lavalampe (siehe advanceEffectPhase)
+float   lavaPhase2       = 0.0f;
 uint8_t effectPreviewHue = 0;
 uint8_t effectPreviewSat = 255;
 int     prevActiveEffect = -1;
@@ -756,6 +758,16 @@ void advanceEffectPhase() {
   // effectSpeed 0..255 → ca. 0.05..3.0 Grad/Frame (bei 60 FPS ~3..180 Grad/s)
   float degPerFrame = 0.05f + (effectSpeed / 255.0f) * 3.0f;
   effectPhase = wrapDeg360(effectPhase + degPerFrame);
+
+  // Lavalampe braucht zwei mit unterschiedlichem Tempo laufende Phasen
+  // (0.6x/0.37x von effectPhase). Würde man wie früher effectPhase selbst
+  // wrappen und dann erst skalieren, springt die Phase bei jedem Wrap von
+  // effectPhase (alle 360°) sichtbar, weil 0.6*360 bzw. 0.37*360 kein
+  // Vielfaches von 360 ist. Stattdessen bekommt jede Sinuswelle ihre eigene,
+  // bereits skalierte Phase, die unabhängig wrapt — dadurch bleibt die
+  // Animation lückenlos.
+  lavaPhase1 = wrapDeg360(lavaPhase1 + degPerFrame * 0.6f);
+  lavaPhase2 = wrapDeg360(lavaPhase2 + degPerFrame * 0.37f);
 }
 
 void applyEffectLeds() {
@@ -822,8 +834,8 @@ void applyEffectLeds() {
       // Organische „Blobs“ aus zwei überlagerten Sinuswellen je LED —
       // moduliert Helligkeit und leicht den Hue um die Basisfarbe herum.
       for (int i = 0; i < TOTAL_LEDS; i++) {
-        float p1 = wrapDeg360(effectPhase * 0.6f  + i * 9.0f);
-        float p2 = wrapDeg360(effectPhase * 0.37f - i * 5.0f + 60.0f);
+        float p1 = wrapDeg360(lavaPhase1 + i * 9.0f);
+        float p2 = wrapDeg360(lavaPhase2 - i * 5.0f + 60.0f);
         float v  = (fastSinDeg(p1) + fastSinDeg(p2)) * 0.5f;      // -1..1
         float briF = 0.35f + 0.65f * ((v + 1.0f) * 0.5f);          // 0.35..1
         uint8_t bri = (uint8_t)(briF * baseBri);
@@ -933,7 +945,9 @@ void handleButton() {
   // 1. Druck → editMode an, Encoder wählt den Effekt (wie das Seiten-Rad).
   // 2. Druck → speedEditMode an, Encoder stellt jetzt die Geschwindigkeit ein.
   // 3. Druck → beides wieder aus, zurück zur Menü-Navigation.
-  if (curSetting == SETTING_EFFECT && editMode && !speedEditMode) {
+  // Bei "AUS" gibt es keine Geschwindigkeit einzustellen, daher wird die
+  // zweite Stufe dort übersprungen.
+  if (curSetting == SETTING_EFFECT && editMode && !speedEditMode && curEffect != EFFECT_OFF) {
     speedEditMode  = true;
     needFullRedraw = true;  // wechselt die Ring-Darstellung von Rad auf Bogen
     return;
