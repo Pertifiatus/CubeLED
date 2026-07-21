@@ -42,7 +42,7 @@ struct DEV_CubeLight : Service::LightBulb {
 
     uint32_t c = leds.gamma32(hsv8ToNeo(h8, s8, v8));  // gleiche Gamma-Korrektur wie im Cube-Modus
     for (int side = 0; side < NUM_SIDES; side++) setSideColor(side, c);
-    ledsShow();
+    leds.show();  // no cube-mode encoder ISR running in HomeSpan mode, so no need for ledsShow()'s ISR guard
 
     return true;
   }
