@@ -501,6 +501,10 @@ git commit -m "Drive the LED cube from a HomeKit LightBulb service in HomeSpan m
 ### Task 5: QR-code pairing display on encoder-button click
 
 **Files:**
+- Create: `V8/QRCodeRicmoo.h` (vendored copy of the installed `QRCode`
+  library's `src/qrcode.h`, renamed)
+- Create: `V8/QRCodeRicmoo.c` (vendored copy of the installed `QRCode`
+  library's `src/qrcode.c`, renamed, with its internal include updated)
 - Modify: `V8/HomeSpanMode.cpp`
 
 **Interfaces:**
@@ -508,10 +512,66 @@ git commit -m "Drive the LED cube from a HomeKit LightBulb service in HomeSpan m
   `CubeShared.h`, already included); `Category::Lighting` and `HapQR` (from
   `<HomeSpan.h>`, already included); `qrcode_getBufferSize`,
   `qrcode_initText`, `qrcode_getModule`, `QRCode`, `ECC_LOW` (from
-  `<qrcode.h>`, added this task).
+  `"QRCodeRicmoo.h"`, vendored this task — see note below).
 - Produces: nothing consumed by later tasks — this is the last task.
 
-- [ ] **Step 1: Add the QR include and a numeric pairing-code constant**
+**Why a vendored copy instead of `#include <qrcode.h>`:** the ESP32-C3
+Arduino core bundles its own internal component (`espressif__qrcode`,
+namespaced under `esp_qrcode_*` — no symbol overlap with the installed
+library) whose own header is also named `qrcode.h`. The core's build system
+always resolves `#include <qrcode.h>` to its own header first, regardless of
+library install order, silently shadowing the `QRCode` library installed in
+Task 1. This is a known, previously-reported conflict
+([ricmoo/QRCode#35](https://github.com/ricmoo/QRCode/issues/35)); the
+community's accepted fix — confirmed here — is to rename the library's own
+two files so the filename no longer collides. Since the renamed file lives
+in `V8/` and is included with quotes (`"QRCodeRicmoo.h"`, not
+`<qrcode.h>`), the sketch directory's own copy always resolves first,
+regardless of the platform header of the same original name. The vendored
+files' MIT license header (Richard Moore / Project Nayuki) must be kept
+intact at the top of both copied files — do not strip it.
+
+- [ ] **Step 1: Locate the installed QRCode library and vendor it under a new name**
+
+Find where `arduino-cli` installed the `QRCode` library (Task 1 ran
+`arduino-cli lib install "QRCode"`):
+
+```powershell
+$cli = "tools\arduino-cli\arduino-cli.exe"
+$cfg = "tools\arduino-cli\arduino-cli.yaml"
+& $cli --config-file $cfg config dump | Select-String "user:"
+```
+
+This prints the `directories.user` (sketchbook) path — the library sits at
+`<that path>\libraries\QRCode\src\qrcode.h` and `qrcode.c`. Copy both into
+`V8/`, renamed:
+
+```powershell
+$libSrc = "<directories.user path from above>\libraries\QRCode\src"
+Copy-Item "$libSrc\qrcode.h" "V8\QRCodeRicmoo.h"
+Copy-Item "$libSrc\qrcode.c" "V8\QRCodeRicmoo.c"
+```
+
+- [ ] **Step 2: Update the vendored `.c` file's internal include**
+
+Open `V8/QRCodeRicmoo.c` and find the line (near the top, after the license
+comment block):
+
+```c
+#include "qrcode.h"
+```
+
+Replace with:
+
+```c
+#include "QRCodeRicmoo.h"
+```
+
+This is the only content change needed in either vendored file — everything
+else (including the MIT license header at the top of both files) stays
+exactly as copied.
+
+- [ ] **Step 3: Add the QR include and a numeric pairing-code constant**
 
 Find:
 ```cpp
@@ -528,7 +588,7 @@ static const char* QR_SETUP_ID  = "CLED";
 Replace with:
 ```cpp
 #include <HomeSpan.h>
-#include <qrcode.h>
+#include "QRCodeRicmoo.h"
 #include "CubeShared.h"
 #include "HomeSpanMode.h"
 
@@ -539,7 +599,7 @@ static const uint32_t PAIRING_CODE_NUM = 46637726;
 static const char*   QR_SETUP_ID      = "CLED";
 ```
 
-- [ ] **Step 2: Add the QR-rendering and button-toggle logic above `homeSpanModeSetup()`**
+- [ ] **Step 4: Add the QR-rendering and button-toggle logic above `homeSpanModeSetup()`**
 
 Find:
 ```cpp
@@ -603,7 +663,7 @@ static void handleQrToggleButton() {
 void homeSpanModeSetup() {
 ```
 
-- [ ] **Step 3: Configure the encoder-button pin in `homeSpanModeSetup()`**
+- [ ] **Step 5: Configure the encoder-button pin in `homeSpanModeSetup()`**
 
 Find:
 ```cpp
@@ -625,7 +685,7 @@ Replace with:
   homeSpan.setPairingCode(PAIRING_CODE);
 ```
 
-- [ ] **Step 4: Poll the button in `homeSpanModeLoop()`**
+- [ ] **Step 6: Poll the button in `homeSpanModeLoop()`**
 
 Find:
 ```cpp
@@ -642,7 +702,7 @@ void homeSpanModeLoop() {
 }
 ```
 
-- [ ] **Step 5: Confirm V7 is still untouched**
+- [ ] **Step 7: Confirm V7 is still untouched**
 
 ```powershell
 git status --porcelain -- V7
@@ -650,7 +710,7 @@ git status --porcelain -- V7
 
 Expected: no output.
 
-- [ ] **Step 6: Compile V8**
+- [ ] **Step 8: Compile V8**
 
 ```powershell
 & "tools\arduino-cli\arduino-cli.exe" --config-file "tools\arduino-cli\arduino-cli.yaml" compile --fqbn "esp32:esp32:esp32c3:PartitionScheme=huge_app" "V8"
@@ -658,10 +718,10 @@ Expected: no output.
 
 Expected: `Sketch uses ... bytes ...`, no `error:` lines.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add V8/HomeSpanMode.cpp
+git add V8/HomeSpanMode.cpp V8/QRCodeRicmoo.h V8/QRCodeRicmoo.c
 git commit -m "Show the HomeKit pairing QR code on encoder-button click in HomeSpan mode"
 ```
 
