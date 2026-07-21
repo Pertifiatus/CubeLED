@@ -729,10 +729,16 @@ git commit -m "Show the HomeKit pairing QR code on encoder-button click in HomeS
 
 ## Post-Plan Notes (for the user, not a task)
 
-- First boot in HomeSpan mode with no WiFi configured yet: HomeSpan opens
-  its own temporary setup access point automatically (standard HomeSpan
-  behavior, no code needed) — connect to it, or use the Serial CLI's `W`
-  command, to provide your home WiFi credentials.
+- First boot in HomeSpan mode with no WiFi configured yet: `homeSpanModeSetup()`
+  calls `homeSpan.enableAutoStartAP()` (added post-plan, commit `551cf4d`),
+  so HomeSpan automatically opens its own temporary setup access point named
+  `CubeLED-Setup` — connect a phone or computer to it, fill in your home
+  WiFi credentials in the page it serves, and the device joins your network
+  and becomes pairable on the next boot. No serial monitor or button needed;
+  this only fires when no WiFi credentials are stored yet (e.g. first boot
+  after a resale), never on ordinary subsequent boots. The Serial CLI's `W`
+  command remains available as a manual alternative if a computer with a
+  serial connection happens to be at hand.
 - The QR `SCALE` constant in `drawPairingQR()` is a calibration knob — check
   on the real round display and adjust if the code is clipped by the bezel
   or too small for a phone camera to read reliably.

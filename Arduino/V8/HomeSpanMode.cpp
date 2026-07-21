@@ -49,16 +49,40 @@ struct DEV_CubeLight : Service::LightBulb {
 };
 
 // ═══════════════════════════════════════════════════════════════════
-//  QR-CODE PAIRING-ANZEIGE -- Klick auf den Encoder-Taster zeigt/versteckt
-//  den HomeKit-Pairing-QR-Code auf dem sonst schwarzen Display.
+//  ONBOARDING-ANZEIGE -- solange das Geraet noch nicht mit HomeKit
+//  gekoppelt ist, zeigt das Display zwei per Drehgeber umschaltbare
+//  Schritte (WLAN verbinden / QR-Code scannen). Nach dem Pairing bleibt
+//  der Bildschirm schwarz, wie bisher.
 // ═══════════════════════════════════════════════════════════════════
-#define BTN_DEBOUNCE_MS 30
-static bool          btnRawLast  = HIGH;
-static bool          btnStable   = HIGH;
-static unsigned long btnChangeMs = 0;
-static bool          qrVisible   = false;
+enum OnboardPage { PAGE_WIFI = 0, PAGE_QR = 1 };
 
-static void drawPairingQR() {
+// ponytail: einfache Flankenerkennung nur auf PIN_ENC_CLK, Drehrichtung
+// wird ignoriert -- bei nur 2 Seiten reicht "irgendeine Rastung = umschalten"
+// vollkommen; volle Gray-Code-Quadraturdekodierung (wie im Cube-Modus) waere
+// hier unnoetiger Aufwand. Bei mehr als 2 Seiten neu bewerten.
+#define ENC_TICK_DEBOUNCE_MS 150
+static bool          encClkLast    = HIGH;
+static unsigned long encTickMs     = 0;
+static int           onboardPage   = PAGE_WIFI;
+static bool          wasPaired     = false;
+static int           lastDrawnPage = -1;
+
+static bool isPaired() {
+  return homeSpan.controllerListBegin() != homeSpan.controllerListEnd();
+}
+
+static void drawWifiStepScreen() {
+  gfx->fillScreen(BLACK);
+  drawCentered("APPLE HOME",                   30, 2, WHITE);
+  drawCentered("SCROLLEN: NAECHSTER SCHRITT",   56, 1, 0x8410);
+
+  drawCentered("SCHRITT 1",                    100, 1, WHITE);
+  drawCentered("WLAN VERBINDEN:",               124, 1, WHITE);
+  drawCentered("\"CubeLED-Setup\"",             140, 1, WHITE);
+  drawCentered("WLAN-DATEN EINGEBEN",           164, 1, WHITE);
+}
+
+static void drawQrStepScreen() {
   HapQR qrEncoder;
   char *uri = qrEncoder.get(PAIRING_CODE_NUM, QR_SETUP_ID, (uint8_t)Category::Lighting);
 
@@ -74,6 +98,7 @@ static void drawPairingQR() {
   int       offset = CX - (qrcode.size * SCALE) / 2;
 
   gfx->fillScreen(WHITE);
+  drawCentered("SCHRITT 2",          32, 1, BLACK);
   for (uint8_t y = 0; y < qrcode.size; y++) {
     for (uint8_t x = 0; x < qrcode.size; x++) {
       if (qrcode_getModule(&qrcode, x, y)) {
@@ -81,23 +106,40 @@ static void drawPairingQR() {
       }
     }
   }
+  drawCentered("ZURUECK: SCROLLEN", 190, 1, BLACK);
 }
 
-static void handleQrToggleButton() {
-  bool raw = digitalRead(PIN_ENC_SW);
-
-  if (raw != btnRawLast) {
-    btnChangeMs = millis();
-    btnRawLast  = raw;
+static void handleOnboardScroll() {
+  bool clk = digitalRead(PIN_ENC_CLK);
+  if (clk == LOW && encClkLast == HIGH && millis() - encTickMs > ENC_TICK_DEBOUNCE_MS) {
+    onboardPage = (onboardPage == PAGE_WIFI) ? PAGE_QR : PAGE_WIFI;
+    encTickMs   = millis();
   }
-  if (millis() - btnChangeMs < BTN_DEBOUNCE_MS) return;
-  if (raw == btnStable) return;
-  btnStable = raw;
-  if (btnStable != LOW) return;
+  encClkLast = clk;
+}
 
-  qrVisible = !qrVisible;
-  if (qrVisible) drawPairingQR();
-  else           gfx->fillScreen(BLACK);
+// Zeigt den Onboarding-Flow, solange das Geraet nicht gekoppelt ist; sobald
+// isPaired() feststellt, dass ein Controller gepairt wurde, wird der
+// Bildschirm einmalig geschwaerzt und bleibt es (kein Re-Onboarding noetig).
+static void updateOnboardScreen() {
+  bool paired = isPaired();
+
+  if (paired) {
+    if (!wasPaired) { gfx->fillScreen(BLACK); lastDrawnPage = -1; }
+    wasPaired = true;
+    return;
+  }
+
+  if (wasPaired) lastDrawnPage = -1;  // frisch entpaart -> Onboarding sofort neu zeichnen
+  wasPaired = false;
+
+  handleOnboardScroll();
+
+  if (onboardPage != lastDrawnPage) {
+    if (onboardPage == PAGE_WIFI) drawWifiStepScreen();
+    else                          drawQrStepScreen();
+    lastDrawnPage = onboardPage;
+  }
 }
 
 void homeSpanModeSetup() {
@@ -110,10 +152,15 @@ void homeSpanModeSetup() {
   leds.setBrightness(255);
   leds.show();
 
-  pinMode(PIN_ENC_SW, INPUT_PULLUP);
+  pinMode(PIN_ENC_CLK, INPUT_PULLUP);
 
   homeSpan.setPairingCode(PAIRING_CODE);
   homeSpan.setQRID(QR_SETUP_ID);
+  // Kein WLAN gespeichert (z.B. Erstinbetriebnahme nach Verkauf) -> HomeSpan
+  // startet automatisch einen eigenen Setup-Access-Point mit Webformular,
+  // kein serieller Monitor noetig. Danach normaler Boot ins Heimnetz.
+  homeSpan.setApSSID("CubeLED-Setup");
+  homeSpan.enableAutoStartAP();
   homeSpan.begin(Category::Lighting, "CubeLED");
 
   new SpanAccessory();
@@ -125,5 +172,5 @@ void homeSpanModeSetup() {
 
 void homeSpanModeLoop() {
   homeSpan.poll();
-  handleQrToggleButton();
+  updateOnboardScreen();
 }
