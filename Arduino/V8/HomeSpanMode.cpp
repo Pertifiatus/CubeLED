@@ -1,4 +1,7 @@
 #include <HomeSpan.h>
+#include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include "QRCodeRicmoo.h"
 #include "CubeShared.h"
 #include "HomeSpanMode.h"
@@ -68,10 +71,19 @@ static bool          wasPaired     = false;
 static int           lastDrawnPage = -1;
 
 // Mit autoPoll() laeuft HomeSpan auf einem eigenen Task -- das Lesen seiner
-// Controller-Liste von hier aus (dem loop()-Task) muss daher ueber
-// HomeSpans eigenen Shared-Mutex abgesichert werden (homeSpanPAUSE/RESUME),
-// sonst waere das ein Data Race gegen den Poll-Task.
+// Controller-Liste von hier aus muesste daher eigentlich ueber HomeSpans
+// Shared-Mutex abgesichert werden (homeSpanPAUSE/RESUME). PER HARDWARE-TEST
+// BESTAETIGT: genau dieser Mutex wird vom Poll-Task waehrend seines allerersten
+// pollTask()-Aufrufs als EXCLUSIVE Lock ueber die komplette Access-Point-Phase
+// gehalten (bis zu 300s) -- ein homeSpanPAUSE-Versuch von hier aus wuerde also
+// genauso lange blockieren wie die AP-Phase selbst. Ohne WLAN-Verbindung kann
+// ohnehin kein Pairing existieren, daher wird der Mutex hier gar nicht erst
+// angefasst, solange WiFi.status() nicht WL_CONNECTED ist -- das umgeht die
+// Blockade vollstaendig, ohne die eigentliche Kernaussage (nicht gepairt) zu
+// verfaelschen.
 static bool isPaired() {
+  if (WiFi.status() != WL_CONNECTED) return false;
+
   homeSpanPAUSE
   bool result = homeSpan.controllerListBegin() != homeSpan.controllerListEnd();
   homeSpanRESUME
@@ -126,6 +138,7 @@ static void drawQrStepScreen() {
 
 static void handleOnboardScroll() {
   bool clk = digitalRead(PIN_ENC_CLK);
+
   if (clk == LOW && encClkLast == HIGH && millis() - encTickMs > ENC_TICK_DEBOUNCE_MS) {
     onboardPage = (onboardPage + 1) % NUM_ONBOARD_PAGES;
     encTickMs   = millis();
@@ -188,19 +201,32 @@ void homeSpanModeSetup() {
     new DEV_CubeLight();
 
   // homeSpan.poll() blockiert bis zu 300s, falls noch kein WLAN gespeichert
-  // ist (der Auto-Start-Access-Point laeuft synchron *innerhalb* des Aufrufs).
-  // autoPoll() laesst HomeSpan stattdessen auf einem eigenen FreeRTOS-Task
-  // laufen -- loop() bleibt dadurch frei fuer Display/Encoder, auch waehrend
-  // HomeSpan den Access Point bedient. WICHTIG: homeSpan.poll() darf dann in
-  // homeSpanModeLoop() NICHT mehr manuell aufgerufen werden (HomeSpan bricht
-  // sonst mit einem Fatal Error ab).
+  // ist (der Auto-Start-Access-Point laeuft synchron *innerhalb* des Aufrufs,
+  // haelt dabei HomeSpans eigenen Mutex exklusiv). autoPoll() laesst HomeSpan
+  // stattdessen auf einem eigenen FreeRTOS-Task laufen. WICHTIG:
+  // homeSpan.poll() darf dann in homeSpanModeLoop() NICHT mehr manuell
+  // aufgerufen werden (HomeSpan bricht sonst mit einem Fatal Error ab).
   homeSpan.autoPoll();
 
-  drawWifiStepScreen();
-  onboardPage   = PAGE_WIFI;
-  lastDrawnPage = PAGE_WIFI;
+  // Mit der isPaired()-Loesung oben laeuft der Onboarding-Task jetzt auch
+  // waehrend der AP-Phase normal weiter, daher kann hier gleich die
+  // Titelseite gezeigt werden (Schritt 1 folgt nach dem ersten Scrollen).
+  drawTitleScreen();
+  onboardPage   = PAGE_TITLE;
+  lastDrawnPage = PAGE_TITLE;
+
+  // Eigener, hoeher priorisierter Task fuers Onboarding-Display/Encoder --
+  // siehe isPaired() fuer den eigentlichen Grund, warum das vorher trotzdem
+  // nicht reichte (Mutex-Blockade, nicht CPU-Prioritaet).
+  xTaskCreate([](void*) {
+    for (;;) {
+      updateOnboardScreen();
+      vTaskDelay(pdMS_TO_TICKS(30));
+    }
+  }, "onboardTask", 4096, NULL, 2, NULL);
 }
 
 void homeSpanModeLoop() {
-  updateOnboardScreen();
+  // Onboarding-Update laeuft in einem eigenen, hoeher priorisierten Task
+  // (siehe homeSpanModeSetup) -- loop() bleibt hier bewusst leer.
 }
