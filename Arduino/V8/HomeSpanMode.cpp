@@ -50,20 +50,20 @@ struct DEV_CubeLight : Service::LightBulb {
 
 // ═══════════════════════════════════════════════════════════════════
 //  ONBOARDING-ANZEIGE -- solange das Geraet noch nicht mit HomeKit
-//  gekoppelt ist, zeigt das Display zwei per Drehgeber umschaltbare
-//  Schritte (WLAN verbinden / QR-Code scannen). Nach dem Pairing bleibt
-//  der Bildschirm schwarz, wie bisher.
+//  gekoppelt ist, zeigt das Display drei per Drehgeber umschaltbare
+//  Seiten (Titel / WLAN verbinden / QR-Code scannen). Nach dem Pairing
+//  bleibt der Bildschirm schwarz, wie bisher.
 // ═══════════════════════════════════════════════════════════════════
-enum OnboardPage { PAGE_WIFI = 0, PAGE_QR = 1 };
+enum OnboardPage { PAGE_TITLE = 0, PAGE_WIFI = 1, PAGE_QR = 2, NUM_ONBOARD_PAGES = 3 };
 
 // ponytail: einfache Flankenerkennung nur auf PIN_ENC_CLK, Drehrichtung
-// wird ignoriert -- bei nur 2 Seiten reicht "irgendeine Rastung = umschalten"
-// vollkommen; volle Gray-Code-Quadraturdekodierung (wie im Cube-Modus) waere
-// hier unnoetiger Aufwand. Bei mehr als 2 Seiten neu bewerten.
+// wird ignoriert -- eine Rastung schaltet immer zur naechsten Seite (zyklisch).
+// Volle Gray-Code-Quadraturdekodierung (wie im Cube-Modus) waere hier
+// unnoetiger Aufwand fuer ein simples Vor-Karussell durch 3 Infoseiten.
 #define ENC_TICK_DEBOUNCE_MS 150
 static bool          encClkLast    = HIGH;
 static unsigned long encTickMs     = 0;
-static int           onboardPage   = PAGE_WIFI;
+static int           onboardPage   = PAGE_TITLE;
 static bool          wasPaired     = false;
 static int           lastDrawnPage = -1;
 
@@ -71,15 +71,23 @@ static bool isPaired() {
   return homeSpan.controllerListBegin() != homeSpan.controllerListEnd();
 }
 
+static void drawTitleScreen() {
+  gfx->fillScreen(BLACK);
+  drawCentered("APPLE HOME",       100, 2, WHITE);
+  drawCentered("EINRICHTEN",       126, 2, WHITE);
+  drawCentered("SCROLLEN: WEITER", 170, 1, 0x8410);
+}
+
 static void drawWifiStepScreen() {
   gfx->fillScreen(BLACK);
-  drawCentered("APPLE HOME",                   30, 2, WHITE);
-  drawCentered("SCROLLEN: NAECHSTER SCHRITT",   56, 1, 0x8410);
+  drawCentered("SCHRITT 1",                 26, 2, WHITE);
+  drawCentered("SCROLLEN: WEITER",          50, 1, 0x8410);
 
-  drawCentered("SCHRITT 1",                    100, 1, WHITE);
-  drawCentered("WLAN VERBINDEN:",               124, 1, WHITE);
-  drawCentered("\"CubeLED-Setup\"",             140, 1, WHITE);
-  drawCentered("WLAN-DATEN EINGEBEN",           164, 1, WHITE);
+  drawCentered("WLAN VERBINDEN:",           88, 1, WHITE);
+  drawCentered("\"CubeLED-Setup\"",        105, 1, WHITE);
+  drawCentered("PASSWORT:",                127, 1, WHITE);
+  drawCentered("\"homespan\"",             144, 1, WHITE);  // HomeSpan-Standardpasswort, nie ueberschrieben
+  drawCentered("DANN WLAN-DATEN EINGEBEN", 168, 1, WHITE);
 }
 
 static void drawQrStepScreen() {
@@ -98,7 +106,7 @@ static void drawQrStepScreen() {
   int       offset = CX - (qrcode.size * SCALE) / 2;
 
   gfx->fillScreen(WHITE);
-  drawCentered("SCHRITT 2",          32, 1, BLACK);
+  drawCentered("SCHRITT 2", 32, 1, BLACK);
   for (uint8_t y = 0; y < qrcode.size; y++) {
     for (uint8_t x = 0; x < qrcode.size; x++) {
       if (qrcode_getModule(&qrcode, x, y)) {
@@ -106,13 +114,13 @@ static void drawQrStepScreen() {
       }
     }
   }
-  drawCentered("ZURUECK: SCROLLEN", 190, 1, BLACK);
+  drawCentered("SCROLLEN: WEITER", 190, 1, BLACK);
 }
 
 static void handleOnboardScroll() {
   bool clk = digitalRead(PIN_ENC_CLK);
   if (clk == LOW && encClkLast == HIGH && millis() - encTickMs > ENC_TICK_DEBOUNCE_MS) {
-    onboardPage = (onboardPage == PAGE_WIFI) ? PAGE_QR : PAGE_WIFI;
+    onboardPage = (onboardPage + 1) % NUM_ONBOARD_PAGES;
     encTickMs   = millis();
   }
   encClkLast = clk;
@@ -136,8 +144,11 @@ static void updateOnboardScreen() {
   handleOnboardScroll();
 
   if (onboardPage != lastDrawnPage) {
-    if (onboardPage == PAGE_WIFI) drawWifiStepScreen();
-    else                          drawQrStepScreen();
+    switch (onboardPage) {
+      case PAGE_TITLE: drawTitleScreen();    break;
+      case PAGE_WIFI:  drawWifiStepScreen(); break;
+      case PAGE_QR:    drawQrStepScreen();   break;
+    }
     lastDrawnPage = onboardPage;
   }
 }
@@ -168,6 +179,15 @@ void homeSpanModeSetup() {
       new Characteristic::Identify();
       new Characteristic::Name("CubeLED");
     new DEV_CubeLight();
+
+  // homeSpan.poll()'s allererster Aufruf blockiert, falls noch kein WLAN
+  // gespeichert ist, bis zu 300s lang (der Auto-Start-Access-Point laeuft
+  // synchron *innerhalb* dieses ersten Aufrufs) -- deshalb hier schon vor
+  // loop() den ersten Onboarding-Screen zeichnen, sonst bleibt das Display
+  // waehrend der ganzen WLAN-Einrichtung schwarz und reagiert auf nichts.
+  drawWifiStepScreen();
+  onboardPage   = PAGE_WIFI;
+  lastDrawnPage = PAGE_WIFI;
 }
 
 void homeSpanModeLoop() {

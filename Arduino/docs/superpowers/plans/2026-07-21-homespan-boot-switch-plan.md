@@ -745,3 +745,23 @@ git commit -m "Show the HomeKit pairing QR code on encoder-button click in HomeS
 - Physical switch wiring: GPIO20 to GND selects HomeSpan mode; leaving it
   open (internal pull-up) selects the existing Cube mode. Reset/power-cycle
   after moving the switch.
+- Discovered on real hardware (commit `d752a5e`): `homeSpan.poll()`'s very
+  first call blocks for up to 300 seconds when no WiFi credentials are
+  stored yet — the auto-start Access Point (`enableAutoStartAP()`) runs
+  *synchronously inside* that first `poll()` call, not in the background.
+  Confirmed via Serial Monitor: after "Starting Access Point... Ready." the
+  log goes silent until either WiFi is entered via the captive portal or
+  the AP times out and the device reboots. This means the onboarding
+  screen (`updateOnboardScreen()`, driven from `homeSpanModeLoop()`) cannot
+  run — and cannot react to the encoder — for the entire duration of that
+  first blocking call. The WiFi step screen is now painted once directly
+  in `homeSpanModeSetup()`, before the first `loop()`/`poll()` call, so the
+  display shows the join-WiFi instructions throughout this window instead
+  of staying black. Scrolling to the QR step only becomes possible once
+  WiFi is actually joined (i.e. once that first blocking `poll()` call
+  finally returns).
+- If the onboarding screen or scrolling ever seems unresponsive again on
+  real hardware, check the Serial Monitor first (115200 baud, "Newline"
+  line ending): lowercase `s` prints current pairing/connection status,
+  `F` performs a factory reset (clears stored WiFi + pairing data) for a
+  clean retest.
