@@ -168,6 +168,14 @@ void homeSpanModeSetup() {
       new Characteristic::Identify();
       new Characteristic::Name("CubeLED");
     new DEV_CubeLight();
+
+  // homeSpan.poll()'s allererster Aufruf blockiert, falls noch kein WLAN
+  // gespeichert ist, bis zu 300s lang (der Auto-Start-Access-Point laeuft
+  // synchron *innerhalb* dieses ersten Aufrufs) -- deshalb hier schon vor
+  // loop() den ersten Onboarding-Screen zeichnen, sonst bleibt das Display
+  // waehrend der ganzen WLAN-Einrichtung schwarz und reagiert auf nichts.
+  drawWifiStepScreen();
+  lastDrawnPage = PAGE_WIFI;
 }
 
 void homeSpanModeLoop() {
